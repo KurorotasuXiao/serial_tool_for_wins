@@ -2,6 +2,7 @@ use clap::Parser;
 use anyhow::{Context, Result};
 use serialport::SerialPort;
 use std::time::Duration;
+use std::io::{self, Read};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -50,6 +51,38 @@ fn port_exists(port_name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn send_message(port: &mut Box<dyn SerialPort>, message: &str) -> Result<()> {
+    // 转化为字节流
+    let bytes = message.as_bytes();
+
+    // 写入串口
+    port.write_all(bytes)
+        .context("写入串口失败")?;
+
+    // 确保数据完全发送
+    port.flush()
+        .context("刷新缓冲区失败")?;
+
+    Ok(())
+}
+
+/// 持续监听串口数据
+fn monitor_port(port: &mut Box<dyn SerialPort>) -> Result<()> {
+    let mut buffer = [0u8; 256]; // 固定大小缓冲区
+
+    loop {
+        match port.read(&mut buffer) {
+            Ok(n) => {
+                // 将字节转为字符串（宽松UTF-8处理）
+                let text = String::from_utf8_lossy(&buffer[..n]);
+                println!("{}", text); // 实时输出
+            },
+            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
 fn main() -> Result<()> {
     env_logger::init(); // 初始化日志
     let args = Args::parse();
@@ -67,12 +100,14 @@ fn main() -> Result<()> {
 
     match args.action {
         Action::Send { message } => {  // 直接解构 message
-            println!("发送消息: {}", message);
-            // To do:实现发送逻辑
+            send_message(&mut port, &message)
+                .context("发送消息失败")?;
+            println!("消息已发送");
         }
         Action::Monitor => {
-            println!("开始监听...");
-            // To do:实现监听逻辑
+            println!("开始监听串口数据（按 Ctrl+C 退出）...");
+            monitor_port(&mut port)
+                .context("监听过程中发生错误")?;
         }
     }
 
